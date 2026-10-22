@@ -3,8 +3,8 @@ let careChildren=[],receiptFile=null,receiptURL='',editingExpense=null,previewSe
 const c=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,x=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x]));
 const selected=el=>[...el.querySelectorAll('input[type=checkbox]:checked')].map(x=>x.value);
-const familyChildren=id=>careChildren.filter(x=>String(x.familyId)===String(id));
-const childNames=r=>(r.childrenSnapshot||[]).map(x=>x.name).join(' + ')||r.ages||'Legacy: children not specified';
+const familyChildren=id=>careChildren.filter(x=>String(x.familyId)===String(id)&&!x.archived);
+const childNames=r=>(r.childrenSnapshot||[]).map(x=>careChildren.find(c=>String(c._id)===String(x.childId))?.name||x.name).join(' + ')||r.ages||'Legacy: children not specified';
 const rateText=r=>r.rateCents!=null?money(r.rateCents)+(r.billingUnit==='segment'?' / segment':' / hour'):Object.entries(r.rates||{}).map(([k,v])=>k+': '+money(v)+'/hour').join(' · ');
 const rateLabel=r=>childNames(r)+' · '+(r.serviceType||'Legacy all services')+' · '+rateText(r)+' · '+r.rateId;
 function options(element,values,label,empty='Choose…'){
@@ -21,19 +21,9 @@ function setUpCare(){
  c('new-rate-family').addEventListener('change',()=>{renderRateChildren();previewCode();});
  c('new-rate-date').addEventListener('change',previewCode);
  c('profile-child-options').addEventListener('change',previewCode);
- c('child-family').addEventListener('change',renderChildList);
- c('child-entry').addEventListener('submit',saveChild);
  c('new-rate-form').addEventListener('submit',saveNewProfile);
- c('legacy-rate-toggle').addEventListener('click',()=>{
-  const hidden=c('rate-form').classList.toggle('hidden');
-  c('legacy-rate-toggle').textContent=hidden?'Show legacy rate form':'Hide legacy rate form';
- });
- c('legacy-shift-toggle').addEventListener('click',()=>{
-  const hidden=c('work-form').classList.toggle('hidden');
-  c('legacy-shift-toggle').textContent=hidden?'Show legacy single-rate form':'Hide legacy single-rate form';
- });
  c('multi-family').addEventListener('change',refreshSegments);
- c('multi-date').addEventListener('change',refreshSegments);
+ c('multi-date').addEventListener('change',()=>{const first=c('multi-segments').querySelector('.seg-date');if(first)first.value=c('multi-date').value;refreshSegments();});
  c('add-segment').addEventListener('click',addSegment);
  c('multi-work-form').addEventListener('submit',saveMultiShift);
  c('multi-segments').addEventListener('click',e=>{
@@ -42,7 +32,7 @@ function setUpCare(){
  c('multi-segments').addEventListener('change',e=>{
   const section=e.target.closest('.segment');if(!section)return;
   if(e.target.matches('.seg-child'))updateSegmentProfiles(section);
-  if(e.target.matches('.seg-rate'))describeSegment(section);
+  if(e.target.matches('.seg-rate,.seg-service'))describeSegment(section);
  });
  for(const inputId of ['receipt-upload','receipt-camera'])
   c(inputId).addEventListener('change',e=>useReceipt(e.target.files[0]));
@@ -56,9 +46,6 @@ function setUpCare(){
  c('report-period').addEventListener('change',()=>c('report-date-wrap').classList.toggle('hidden',c('report-period').value==='all'));
  c('report-run').addEventListener('click',showCategoryReport);
  addSegment();
-}
-function renderChildList(){
- c('children-list').innerHTML=familyChildren(c('child-family').value).map(x=>'<span class="child-chip">'+esc(x.name)+'</span>').join('');
 }
 function renderRateChildren(){
  const prior=selected(c('profile-child-options'));
@@ -74,13 +61,6 @@ async function previewCode(){
   const out=await api('rates/preview-v2',{method:'POST',data:{familyId,childIds,effectiveDate}});
   if(seq===previewSequence)c('new-rate-code').value=out.rateId;
  }catch(e){if(seq===previewSequence)c('new-rate-code').value=e.message;}
-}
-async function saveChild(e){
- e.preventDefault();const btn=e.currentTarget.querySelector('[type=submit]');btn.disabled=true;
- try{
-  await api('children',{method:'POST',data:{familyId:c('child-family').value,name:c('child-name').value}});
-  c('child-name').value='';notice('Child added.');await load();
- }catch(error){notice(error.message,true);}finally{btn.disabled=false;}
 }
 async function saveNewProfile(e){
  e.preventDefault();const btn=e.currentTarget.querySelector('[type=submit]');btn.disabled=true;
@@ -107,6 +87,7 @@ function addSegment(){
  '<div class="form-grid">'+
  '<label>Work date<input class="seg-date" type="date" required></label>'+
  '<label>Rate profile<select class="seg-rate" required></select></label>'+
+ '<label class="seg-service-label hidden">Service<select class="seg-service"><option>Daytime</option><option>Overnight Awake</option><option>Overnight Asleep</option></select></label>'+
  '<label>Start time<input class="seg-start" type="time" required></label>'+
  '<label>End time<input class="seg-end" type="time" required></label>'+
  '<label>Unpaid break (minutes)<input class="seg-break" min="0" step="1" type="number" value="0" required></label></div>'+
@@ -132,7 +113,8 @@ function refreshSegments(){
 function updateSegmentProfiles(section){
  const familyId=c('multi-family').value,kids=selected(section.querySelector('.segment-child-options')).sort();
  const matching=rates.filter(r=>{
-  if(String(r.familyId)!==familyId||!Array.isArray(r.childIds)||!r.childIds.length)return false;
+  if(String(r.familyId)!==familyId||(r.childIds||[]).some(id=>careChildren.find(c=>String(c._id)===String(id))?.archived))return false;
+  if(!r.childIds?.length)return !kids.length;
   const ids=r.childIds.map(String).sort();
   return ids.length?JSON.stringify(ids)===JSON.stringify(kids):!kids.length;
  });
@@ -140,15 +122,16 @@ function updateSegmentProfiles(section){
 }
 function describeSegment(section){
  const rate=rates.find(r=>String(r._id)===section.querySelector('.seg-rate').value);
+ section.querySelector('.seg-service-label').classList.toggle('hidden',!rate?.rates);
  section.querySelector('.segment-description').textContent=rate?
-  (rate.serviceType||'Legacy rate')+' · '+rateText(rate)+' · '+rate.rateId:
-  'Select children and a matching saved rate profile. Use the legacy form for older profiles.';
+  childNames(rate)+' · '+(rate.serviceType||section.querySelector('.seg-service').value)+' · '+rateText(rate)+' · '+rate.rateId:
+  'Select children and a matching rate. For older profiles without named children, leave children unselected and choose a service.';
 }
 async function saveMultiShift(e){
  e.preventDefault();const btn=e.currentTarget.querySelector('[type=submit]');btn.disabled=true;
  const segments=[...c('multi-segments').children].map(x=>({
   workDate:x.querySelector('.seg-date').value,rateId:x.querySelector('.seg-rate').value,
-  childIds:selected(x.querySelector('.segment-child-options')),startTime:x.querySelector('.seg-start').value,
+  serviceType:x.querySelector('.seg-service').value,childIds:selected(x.querySelector('.segment-child-options')),startTime:x.querySelector('.seg-start').value,
   endTime:x.querySelector('.seg-end').value,breakMinutes:x.querySelector('.seg-break').value
  }));
  try{
@@ -230,10 +213,7 @@ async function showCategoryReport(){
 }
 function renderEnhancedTables(){
  const history=c('profile-cards');
- history.innerHTML=rates.map(r=>'<article class="profile-tile"><strong>'+esc(childNames(r))+'</strong><span>'+esc(r.serviceType||'Legacy: multiple services')+'</span><b>'+esc(rateText(r))+'</b><code>'+esc(r.rateId)+'</code><small>'+esc(r.familyName)+' · Effective '+esc(r.effectiveDate)+'</small></article>').join('')||'<p class="muted">No rate profiles yet.</p>';
- const table=c('rate-rows').closest('table');
- table.querySelector('thead tr').innerHTML='<th>Rate ID</th><th>Family</th><th>Children</th><th>Service type</th><th>Rate</th><th>Effective</th>';
- c('rate-rows').innerHTML=rates.map(r=>'<tr><td><code>'+esc(r.rateId)+'</code></td><td>'+esc(r.familyName)+'</td><td>'+esc(childNames(r))+'</td><td>'+esc(r.serviceType||'Legacy: multiple')+'</td><td>'+esc(rateText(r))+'</td><td>'+esc(r.effectiveDate)+'</td></tr>').join('')||'<tr><td class="empty" colspan="6">No rate profiles yet.</td></tr>';
+ history.innerHTML=rates.map(r=>'<article class="profile-tile"><strong>'+esc(childNames(r))+'</strong><span>'+esc(r.serviceType||'Legacy: multiple services')+'</span><b>'+esc(rateText(r))+'</b><code>'+esc(r.rateId)+'</code><small>'+((r.childIds||[]).some(id=>careChildren.find(c=>String(c._id)===String(id))?.archived)?'Archived child · unavailable for new shifts · ':'')+esc(families.find(f=>String(f._id)===String(r.familyId))?.name||r.familyName)+' · Effective '+esc(r.effectiveDate)+'</small></article>').join('')||'<p class="muted">No rate profiles yet.</p>';
  const oneDetail=s=>{
   const parts=s.careSegments?.length?s.careSegments:[{
    rateCode:s.rateCode,serviceType:s.serviceType,workDate:s.workDate,startTime:s.startTime,
@@ -245,17 +225,23 @@ function renderEnhancedTables(){
  const ids=s=>s.rateCodes?.length?s.rateCodes:[s.rateCode||'Legacy'];
  c('work-rows').closest('table').querySelector('thead tr').innerHTML='<th>Date</th><th>Family</th><th>Rate IDs</th><th>Service</th><th>Times</th><th>Hours</th><th>Wages</th><th>Details</th>';
  c('work-rows').innerHTML=shifts.map(s=>'<tr><td>'+esc(s.workDate)+'</td><td>'+esc(s.familyName)+'</td><td>'+((ids(s).length>1)?'<b>Multiple rates</b> ':'')+ids(s).map(x=>'<code>'+esc(x)+'</code>').join(' ')+'</td><td>'+esc(s.serviceType)+'</td><td>'+esc(s.startTime)+'–'+esc(s.endTime)+'</td><td>'+esc((s.paidMinutes/60).toFixed(2))+'</td><td>'+esc(money(s.wageCents))+'</td><td>'+oneDetail(s)+' <button class="danger tiny remove" data-kind="shifts" data-id="'+esc(s._id)+'">Delete</button></td></tr>').join('')||'<tr><td colspan="8" class="empty">No shifts yet.</td></tr>';
- c('mobile-shifts').innerHTML=shifts.map(s=>'<article class="shift-tile"><strong>'+esc(s.workDate)+' · '+esc(s.familyName)+'</strong><p>'+esc(money(s.wageCents))+' · '+esc((s.paidMinutes/60).toFixed(2))+' hours</p><p>'+ids(s).map(x=>'<code>'+esc(x)+'</code>').join(' ')+'</p>'+oneDetail(s)+'</article>').join('')||'<p class="muted">No shifts yet.</p>';
+ c('mobile-shifts').innerHTML=shifts.map(s=>'<article class="shift-tile"><strong>'+esc(s.workDate)+' · '+esc(s.familyName)+'</strong><p>'+esc(money(s.wageCents))+' · '+esc((s.paidMinutes/60).toFixed(2))+' hours</p><p>'+ids(s).map(x=>'<code>'+esc(x)+'</code>').join(' ')+'</p>'+oneDetail(s)+'<button type="button" class="danger remove" data-kind="shifts" data-id="'+esc(s._id)+'">Delete shift</button></article>').join('')||'<p class="muted">No shifts yet.</p>';
  c('expense-rows').closest('table').querySelector('thead tr').innerHTML='<th>Date</th><th>Family</th><th>Expense type</th><th>Description</th><th>Amount</th><th>Receipt</th><th>Actions</th>';
  c('expense-rows').innerHTML=expenses.map(e=>'<tr><td>'+esc(e.purchaseDate)+'</td><td>'+esc(e.familyName)+'</td><td>'+esc(e.expenseType||'Uncategorised')+'</td><td>'+esc(e.description)+'</td><td>'+esc(money(e.amountCents))+'</td><td>'+(e.receiptId?'<a href="/api/receipts/'+esc(e.receiptId)+'">Download</a>':'None')+'</td><td><button type="button" class="secondary tiny edit-expense" data-id="'+esc(e._id)+'">Edit</button> <button class="danger tiny remove" data-kind="expenses" data-id="'+esc(e._id)+'">Delete</button></td></tr>').join('')||'<tr><td colspan="7" class="empty">No expenses yet.</td></tr>';
 }
 window.renderCareEnhancements=async function(){
  setUpCare();
- for(const key of ['new-rate-family','multi-family','child-family','report-family'])
+ for(const key of ['new-rate-family','multi-family','report-family'])
   options(c(key),families,f=>f.name,key==='report-family'?'All families':'Choose family…');
- renderEnhancedTables();
  try{
   careChildren=await api('children');
-  renderChildList();renderRateChildren();refreshSegments();await previewCode();
+  renderFamilyList();renderEnhancedTables();labelMobileTables();renderRateChildren();refreshSegments();await previewCode();
  }catch(e){notice('Could not refresh children: '+e.message,true);}
 };
+
+function labelMobileTables(){
+ for(const table of document.querySelectorAll('table')){
+  const labels=[...table.querySelectorAll('th')].map(th=>th.textContent||'Actions');
+  for(const row of table.tBodies[0]?.rows||[])for(const [i,cell] of [...row.cells].entries())if(cell.colSpan===1)cell.dataset.label=labels[i];
+ }
+}

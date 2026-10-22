@@ -8,8 +8,9 @@
   },
   "scripts": {
     "start": "node server.js",
-    "test": "node --test && node --check server.js && node --check care-logic.js && node --check feature-routes.js && node --check public/app.js && node --check public/upgrade.js",
-    "hash-password": "node scripts/hash-password.js"
+    "test": "node --test && node --check server.js && node --check care-logic.js && node --check feature-routes.js && node --check public/app.js && node --check public/upgrade.js && node --check family-routes.js && node --check public/families.js",
+    "hash-password": "node scripts/hash-password.js",
+    "test:browser": "node scripts/verify-mobile.mjs"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
@@ -22,5 +23,9 @@
     "luxon": "^3.5.0",
     "mongodb": "^6.12.0",
     "multer": "^1.4.5-lts.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.51.1",
+    "mongodb-memory-server": "^11.3.0"
   }
 }

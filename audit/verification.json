@@ -1,0 +1,11 @@
+{
+  "checks": [
+    "Real Mongo transactions: rename, unlinked removal, archive, restore, stale-edit rejection, archived-profile rejection; rate and shift documents unchanged.",
+    "chromium portrait 375×812: four views, controls, family dialog and cancel passed",
+    "chromium landscape 812×375: four views, controls, family dialog and cancel passed",
+    "chromium keyboard 375×390: four views, controls, family dialog and cancel passed",
+    "chromium desktop 1440×900: four views, controls, family dialog and cancel passed",
+    "chromium: UI expense save with receipt, expense edit, category report, child addition, combination rate creation, segmented and legacy shift saves, CSV export succeeded"
+  ],
+  "errors": []
+}

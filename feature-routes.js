@@ -29,9 +29,9 @@ export async function registerCareRoutes(app,{db,csrf,wrap}){
   if(!Array.isArray(raw)||!raw.length||raw.length>20||new Set(raw).size!==raw.length)throw Error('Select 1–20 distinct children.');
   const ids=raw.map(id);
   if(ids.some(x=>!x))throw Error('Invalid child selection.');
-  const selected=await db.collection('children').find({familyId,_id:{$in:ids}}).toArray();
+  const selected=await db.collection('children').find({familyId,archived:{$ne:true},_id:{$in:ids}}).toArray();
   if(selected.length!==ids.length)throw Error('One or more children are not in the selected family.');
-  const all=await db.collection('children').find({familyId}).toArray();
+  const all=await db.collection('children').find({familyId,archived:{$ne:true}}).toArray();
   const allChildren=all.length>1&&all.length===selected.length;
   selected.sort((a,b)=>a.name.localeCompare(b.name,'en-AU',{sensitivity:'base'}));
   return {family,selected,allChildren};
@@ -83,11 +83,15 @@ export async function registerCareRoutes(app,{db,csrf,wrap}){
   const profileIds=input.segments.map(s=>id(s.rateId));
   if(profileIds.some(x=>!x))return res.status(400).json({error:'Select a rate profile in each segment.'});
   const profiles=await db.collection('rates').find({_id:{$in:profileIds},familyId}).toArray();
+  const currentChildren=await db.collection('children').find({familyId}).toArray();
+  const currentNames=new Map(currentChildren.map(c=>[String(c._id),c.name]));
+  const archivedIds=new Set(currentChildren.filter(c=>c.archived).map(c=>String(c._id)));
   const profileMap=new Map(profiles.map(x=>[String(x._id),x]));
   let result;
   try{
    const segments=input.segments.map(s=>{
     const p=profileMap.get(String(s.rateId));
+    if(p&&(p.childIds||[]).some(i=>archivedIds.has(String(i))))throw Error('This rate includes an archived child. Choose a current rate profile.');
     if(!p)throw Error('Every segment must use a rate profile belonging to the selected family.');
     if(!validDate(s.workDate)||s.workDate<p.effectiveDate)throw Error('A segment date precedes the profile effective date.');
     const serviceType=p.serviceType||s.serviceType;
@@ -104,7 +108,7 @@ export async function registerCareRoutes(app,{db,csrf,wrap}){
     return {
      rateId:p._id,rateCode:p.rateId,serviceType,
      childIds:p.childIds||[],
-     childrenSnapshot:p.childrenSnapshot||[],
+     childrenSnapshot:(p.childrenSnapshot||[]).map(c=>({...c,name:currentNames.get(String(c.childId))||c.name})),
      rateCents,billingUnit:unit,
      workDate:s.workDate,startTime:s.startTime,endTime:s.endTime,
      breakMinutes:s.breakMinutes||0
