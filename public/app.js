@@ -63,6 +63,7 @@ function draw(){
  tableRows('monthly-rows',report.monthly||[],6,r=>'<td>'+safe(r.period)+'</td><td>'+safe(r.familyName)+'</td><td>'+safe(r.paidHours.toFixed(2))+'</td><td>'+money(r.wagesCents)+'</td><td>'+money(r.expensesCents)+'</td><td><strong>'+money(r.totalCents)+'</strong></td>');
  const totals=(report.weekly||[]).reduce((a,r)=>({w:a.w+r.wagesCents,e:a.e+r.expensesCents,h:a.h+r.paidHours}),{w:0,e:0,h:0});
  $('totals').innerHTML='<div class="metric"><span>Logged paid hours</span><strong>'+totals.h.toFixed(2)+'</strong></div><div class="metric"><span>Base wages</span><strong>'+money(totals.w)+'</strong></div><div class="metric"><span>Reimbursements</span><strong>'+money(totals.e)+'</strong></div><div class="metric"><span>Total payment</span><strong>'+money(totals.w+totals.e)+'</strong></div>';
+ if(typeof window.renderCareEnhancements==='function')void window.renderCareEnhancements();
 }
 async function submit(form,endpoint,asForm=false){
  const btn=form.querySelector('[type=submit]');btn.disabled=true;
