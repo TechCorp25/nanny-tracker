@@ -59,7 +59,7 @@ export function makeReport(shifts,expenses,payments){
 export function generateRateId(familyName,familyId,existingRates=[]){
  const stem=String(familyName??'').normalize('NFKD')
   .replace(/[\u0300-\u036f]/g,'').replace(/(?:[\s_-]+family)\s*$/i,'')
-  .replace(/[^A-Za-z0-9]+/g,'-').replace(/^-+|-+$/g,'')
+  .replace(/['’]/g,'').replace(/[^A-Za-z0-9]+/g,'-').replace(/^-+|-+$/g,'')
   .toUpperCase().slice(0,42).replace(/-+$/g,'')||'FAMILY';
  const owner=String(familyId??'');
  const owned=existingRates.filter(r=>String(r.familyId)===owner);
