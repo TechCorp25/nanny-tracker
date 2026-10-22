@@ -7,6 +7,7 @@
 <title>Care Ledger — Nanny Wages & Expenses</title>
 <link rel="stylesheet" href="/style.css">
 <script defer src="/app.js"></script>
+<script defer src="/upgrade.js"></script>
 </head>
 <body>
 <header class="top">
@@ -39,7 +40,7 @@
 <section id="work" class="view hidden">
 <div class="heading"><div><h1>Work log</h1><p class="muted">Use a separate entry whenever the rate switches between awake and asleep</p></div><a class="btn secondary small" href="/api/export/shifts.csv">Export CSV</a></div>
 <div class="card"><h2>Add a shift</h2>
-<form id="work-form" class="form-grid">
+<form id="work-form" class="form-grid hidden">
 <label>Work date<input name="workDate" type="date" required></label>
 <label>Rate profile<select id="shift-rate" name="rateId" required></select></label>
 <label>Service<select name="serviceType"><option>Daytime</option><option>Overnight Awake</option><option>Overnight Asleep</option></select></label>
@@ -48,8 +49,12 @@
 <label>Unpaid break (minutes)<input name="breakMinutes" type="number" value="0" min="0" step="1" required></label>
 <label class="wide">Notes<textarea name="notes" rows="2" placeholder="Shift details or issues"></textarea></label>
 <button type="submit">Save shift</button>
-</form></div>
-<div class="card"><h2>Recent shifts</h2><div class="tablewrap"><table><thead><tr><th>Date</th><th>Family</th><th>Service</th><th>Time</th><th>Hours</th><th>Rate</th><th>Wages</th><th></th></tr></thead><tbody id="work-rows"></tbody></table></div></div>
+</form>
+<div class="enhanced-form"><h3>Segmented shift</h3><form id="multi-work-form">
+<div class="form-grid"><label>Family<select id="multi-family" required></select></label><label>Shift date<input id="multi-date" type="date" required></label><label class="wide">Notes<textarea id="multi-notes" rows="2" maxlength="800"></textarea></label></div>
+<div id="multi-segments"></div><div class="shift-actions"><button id="add-segment" type="button" class="secondary">Add time segment</button><button type="submit">Save entire shift</button></div><p class="muted">Each segment has its own children and rate. Dates and times must not overlap.</p>
+</form></div><button id="legacy-shift-toggle" type="button" class="secondary small">Show legacy single-rate form</button></div>
+<div class="card"><h2>Recent shifts</h2><div class="tablewrap"><table><thead><tr><th>Date</th><th>Family</th><th>Service</th><th>Time</th><th>Hours</th><th>Rate</th><th>Wages</th><th></th></tr></thead><tbody id="work-rows"></tbody></table></div><div id="mobile-shifts" class="mobile-shifts"></div></div>
 </section>
 <section id="expenses" class="view hidden">
 <div class="heading"><div><h1>Reimbursable expenses</h1><p class="muted">Expenses are added to family wages in the same payment period</p></div><a class="btn secondary small" href="/api/export/expenses.csv">Export CSV</a></div>
@@ -57,19 +62,19 @@
 <form id="expense-form" class="form-grid" enctype="multipart/form-data">
 <label>Purchase date<input name="purchaseDate" type="date" required></label>
 <label>Family<select id="expense-family" name="familyId" required></select></label>
-<label>Description<input name="description" required maxlength="250"></label>
+<label>Description<input name="description" required maxlength="250"></label><label>Expense type (required)<select name="expenseType" required><option value="">Choose type…</option><option>Food and meals</option><option>Transport and mileage</option><option>Activities and admission fees</option><option>Childcare supplies</option><option>Other</option></select></label>
 <label>Amount (AUD)<input name="amount" type="number" min="0.01" step="0.01" required></label>
-<label>Receipt (PDF, JPG or PNG, max 8 MB)<input name="receipt" type="file" accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"></label>
+<div class="receipt-area wide"><strong>Receipt (optional, up to 8 MB)</strong><p class="muted">PDF, JPG or PNG</p><div class="receipt-actions"><label class="btn secondary" for="receipt-upload">Upload receipt<input id="receipt-upload" type="file" accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"></label><label class="btn secondary" for="receipt-camera">Take photo<input id="receipt-camera" type="file" accept="image/*" capture="environment"></label></div><div id="receipt-preview" aria-live="polite">No receipt selected.</div><button type="button" class="secondary small hidden" id="remove-receipt">Remove receipt</button><input name="receipt" type="file" class="hidden" tabindex="-1" aria-hidden="true"></div>
 <label>Notes<input name="notes" maxlength="600"></label>
-<button type="submit">Save expense</button>
+<button type="submit" id="expense-save">Save expense</button><button type="button" class="secondary hidden" id="expense-cancel">Cancel editing</button>
 </form></div>
-<div class="card"><h2>Expense history</h2><div class="tablewrap"><table><thead><tr><th>Date</th><th>Family</th><th>Description</th><th>Amount</th><th>Receipt</th><th></th></tr></thead><tbody id="expense-rows"></tbody></table></div></div>
+<div class="card"><h2>Expense history</h2><div class="tablewrap"><table><thead><tr><th>Date</th><th>Family</th><th>Description</th><th>Amount</th><th>Receipt</th><th></th></tr></thead><tbody id="expense-rows"></tbody></table></div></div><div class="card"><h2>Expense categories <small class="muted">(optional)</small></h2><div class="form-grid"><label>Family<select id="report-family"></select></label><label>Reporting period<select id="report-period"><option value="all">All time</option><option value="week">Week</option><option value="month">Month</option></select></label><label id="report-date-wrap" class="hidden">Period date<input type="date" id="report-date"></label><button type="button" id="report-run">View breakdown</button></div><div id="report-results" aria-live="polite"></div><p class="muted">This view never changes reimbursement calculations.</p></div>
 </section>
 <section id="profiles" class="view hidden">
 <div class="heading"><div><h1>Families and rates</h1><p class="muted">Maintain a distinct rate version for each ages/children combination</p></div></div>
 <div class="columns">
 <div class="card"><h2>Add family</h2><form id="family-form"><label>Family name<input name="name" placeholder="e.g. Smith family" required maxlength="100"></label><button type="submit">Add family</button></form><div id="family-list"></div></div>
-<div class="card"><h2>Add rate profile</h2><form id="rate-form" class="form-grid">
+<div class="card"><h2>Add rate profile</h2><form id="rate-form" class="form-grid hidden">
 <label>Family<select id="rate-family" name="familyId" required></select></label>
 <label>Rate ID (automatic)<input id="rate-id-preview" type="text" value="Choose a family" readonly aria-label="Automatically generated rate ID"></label>
 <label>Number of children<input name="childrenCount" type="number" min="1" max="20" step="1" required></label>
@@ -80,8 +85,9 @@
 <label>Effective date<input name="effectiveDate" type="date" required></label>
 <label class="wide">Notes<textarea name="notes" rows="2"></textarea></label>
 <button type="submit">Save rate version</button>
-</form></div></div>
-<div class="card"><h2>Rate history</h2><div class="tablewrap"><table><thead><tr><th>Rate ID</th><th>Family</th><th>Children</th><th>Ages</th><th>Day</th><th>Awake</th><th>Asleep</th><th>Effective</th></tr></thead><tbody id="rate-rows"></tbody></table></div></div>
+</form><button id="legacy-rate-toggle" class="secondary small" type="button">Show legacy rate form</button></div></div>
+<div class="card"><h2>Children and care rate profiles</h2><form id="child-entry"><div class="form-grid"><label>Family<select id="child-family" required></select></label><label>Child name<input id="child-name" minlength="2" maxlength="80" required placeholder="e.g. Clementine"></label><button type="submit">Add child</button></div><div id="children-list" class="child-chips"></div></form><hr><form id="new-rate-form"><div class="form-grid"><label>Family<select id="new-rate-family" required></select></label><label>Effective start date<input type="date" id="new-rate-date" required></label></div><fieldset class="child-fieldset"><legend>Children included in this rate (required)</legend><div id="profile-child-options" class="checkbox-grid"></div></fieldset><div class="form-grid"><label>Service type<select id="new-rate-service" required><option value="">Choose service…</option><option>Daytime</option><option>Overnight Awake</option><option>Overnight Asleep</option></select></label><label>Rate (AUD)<input id="new-rate-amount" min="0.01" step="0.01" type="number" required></label><label>Billing unit<select id="new-rate-unit"><option value="hour">Per hour</option><option value="segment">Flat rate per segment</option></select></label><label>Rate ID (automatic)<input type="text" readonly id="new-rate-code" value="Select family, children and date"></label><label class="wide">Children ages or arrangement (optional)<input id="new-rate-ages" maxlength="140"></label><label class="wide">Notes<textarea rows="2" maxlength="600" id="new-rate-notes"></textarea></label><button type="submit">Save care rate profile</button></div></form></div>
+<div class="card"><h2>Rate history</h2><div class="tablewrap"><table><thead><tr><th>Rate ID</th><th>Family</th><th>Children</th><th>Ages</th><th>Day</th><th>Awake</th><th>Asleep</th><th>Effective</th></tr></thead><tbody id="rate-rows"></tbody></table></div><div id="profile-cards" class="profile-cards"></div></div>
 </section>
 </div>
 <div id="message" class="toast hidden" role="status" aria-live="polite"></div>
