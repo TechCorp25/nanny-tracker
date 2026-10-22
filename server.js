@@ -11,6 +11,8 @@ import crypto from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {dirname,join} from 'node:path';
 import {validDate,validTime,toCents,calculateShift,weekOf,makeReport,SERVICES,STATUSES,generateRateId} from './lib.js';
+import {EXPENSE_TYPES} from './care-logic.js';
+import {registerCareRoutes} from './feature-routes.js';
 
 const required=['MONGODB_URI','ADMIN_EMAIL','ADMIN_PASSWORD_HASH','SESSION_SECRET'];
 const missing=required.filter(k=>!process.env[k]||process.env[k].includes('<'));
@@ -56,6 +58,7 @@ app.post('/api/login',rateLimit({windowMs:900000,limit:8,standardHeaders:'draft-
 }));
 app.use('/api',auth);
 app.post('/api/logout',csrf,(req,res)=>req.session.destroy(e=>e?fail(res,'Sign-out error.',500):res.clearCookie('nanny.sid').json({ok:true})));
+await registerCareRoutes(app,{db,csrf,wrap});
 app.get('/api/families',wrap(async(req,res)=>res.json(await db.collection('families').find({}).sort({name:1}).toArray())));
 app.post('/api/families',csrf,wrap(async(req,res)=>guard(req,res,async()=>{
  const name=safe(req.body.name,100);if(name.length<2)throw Error('Family name must contain at least two characters.');
@@ -124,9 +127,11 @@ app.post('/api/expenses',csrf,upload,wrap(async(req,res)=>{
   const purchaseDate=req.body.purchaseDate,description=safe(req.body.description,250);
   if(!family||!validDate(purchaseDate)||!description)throw Error('Enter a family, purchase date and description.');
   const amountCents=toCents(req.body.amount);
+  const expenseType=safe(req.body.expenseType,70);
+  if(!EXPENSE_TYPES.includes(expenseType))throw Error('Choose an expense type.');
   const mime=verifyFile(req.file);
   if(mime){receiptId=new ObjectId();const stream=bucket.openUploadStreamWithId(receiptId,'receipt',{contentType:mime});await new Promise((resolve,reject)=>{stream.on('finish',resolve).on('error',reject);stream.end(req.file.buffer);});}
-  await db.collection('expenses').insertOne({familyId,familyName:family.name,purchaseDate,description,amountCents,notes:safe(req.body.notes,600),receiptId,createdAt:new Date()});
+  await db.collection('expenses').insertOne({familyId,familyName:family.name,purchaseDate,description,amountCents,expenseType,notes:safe(req.body.notes,600),receiptId,createdAt:new Date()});
   res.status(201).json({ok:true});
  });
 }));
@@ -156,11 +161,11 @@ const csvEscape=s=>{let v=String(s??'');if(/^\s*[=+@-]/.test(v))v="'"+v;return '
 app.get('/api/export/:type.csv',wrap(async(req,res)=>{
  const type=req.params.type;let headers,rows;
  if(type==='shifts'){
-  headers=['Date','Family','Rate ID','Service','Start','End','Break minutes','Hours','Rate AUD','Wages AUD','Notes'];
-  rows=(await db.collection('shifts').find({}).sort({startAt:1}).toArray()).map(s=>[s.workDate,s.familyName,s.rateCode,s.serviceType,s.startTime,s.endTime,s.breakMinutes,(s.paidMinutes/60).toFixed(2),(s.hourlyRateCents/100).toFixed(2),(s.wageCents/100).toFixed(2),s.notes]);
+  headers=['Date','Family','Rate IDs','Service','Start','End','Break minutes','Hours','Rate AUD','Wages AUD','Notes','Segment detail'];
+  rows=(await db.collection('shifts').find({}).sort({startAt:1}).toArray()).map(s=>[s.workDate,s.familyName,(s.rateCodes||[s.rateCode]).join('; '),s.serviceType,s.startTime,s.endTime,s.breakMinutes,(s.paidMinutes/60).toFixed(2),s.hourlyRateCents==null?'Multiple / flat':(s.hourlyRateCents/100).toFixed(2),(s.wageCents/100).toFixed(2),s.notes,(s.careSegments||[]).map(p=>p.workDate+' '+p.startTime+'-'+p.endTime+' '+p.rateCode).join('; ')]);
  }else if(type==='expenses'){
-  headers=['Date','Family','Description','Amount AUD','Receipt','Notes'];
-  rows=(await db.collection('expenses').find({}).sort({purchaseDate:1}).toArray()).map(e=>[e.purchaseDate,e.familyName,e.description,(e.amountCents/100).toFixed(2),e.receiptId?'Yes':'No',e.notes]);
+  headers=['Date','Family','Description','Amount AUD','Expense type','Receipt','Notes'];
+  rows=(await db.collection('expenses').find({}).sort({purchaseDate:1}).toArray()).map(e=>[e.purchaseDate,e.familyName,e.description,(e.amountCents/100).toFixed(2),e.expenseType||'Uncategorised',e.receiptId?'Yes':'No',e.notes]);
  }else return fail(res,'Unknown export.',404);
  res.set({'Content-Type':'text/csv; charset=utf-8','Content-Disposition':'attachment; filename="nanny-'+type+'.csv"','Cache-Control':'no-store'});
  res.send('\ufeff'+[headers,...rows].map(r=>r.map(csvEscape).join(',')).join('\r\n'));
