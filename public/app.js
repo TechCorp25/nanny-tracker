@@ -37,9 +37,23 @@ function tableRows(id,rows,columnCount,render){
  if(!rows.length)return emptyRows(id,columnCount,'No entries yet.');
  for(const data of rows){const tr=document.createElement('tr');tr.innerHTML=render(data);body.append(tr);}
 }
+let ratePreviewRequest=0;
+async function refreshRateIdPreview(){
+ const input=$('rate-id-preview'),familyId=$('rate-family').value;
+ const request=++ratePreviewRequest;
+ if(!familyId){input.value='Choose a family';return;}
+ input.value='Generating…';
+ try{
+  const result=await api('rates/next-id?familyId='+encodeURIComponent(familyId));
+  if(request===ratePreviewRequest)input.value=result.rateId;
+ }catch(error){
+  if(request===ratePreviewRequest)input.value='Unavailable: '+error.message;
+ }
+}
 function draw(){
  selectOptions('shift-rate',rates,'_id',r=>r.familyName+' · '+r.rateId+' ('+r.ages+')');
  selectOptions('rate-family',families,'_id',f=>f.name);
+ void refreshRateIdPreview();
  selectOptions('expense-family',families,'_id',f=>f.name);
  $('family-list').innerHTML=families.length?'<ul>'+families.map(f=>'<li>'+safe(f.name)+'</li>').join('')+'</ul>':'<p class="muted">No families added yet.</p>';
  tableRows('rate-rows',rates,8,r=>'<td>'+safe(r.rateId)+'</td><td>'+safe(r.familyName)+'</td><td>'+safe(r.childrenCount)+'</td><td>'+safe(r.ages)+'</td><td>'+money(r.rates?.Daytime)+'</td><td>'+money(r.rates?.['Overnight Awake'])+'</td><td>'+money(r.rates?.['Overnight Asleep'])+'</td><td>'+safe(r.effectiveDate)+'</td>');
@@ -52,13 +66,18 @@ function draw(){
 }
 async function submit(form,endpoint,asForm=false){
  const btn=form.querySelector('[type=submit]');btn.disabled=true;
+ const newFamilyName=endpoint==='families'?form.elements.namedItem('name').value.trim():null;
  try{
-  await api(endpoint,{method:'POST',data:asForm?new FormData(form):payload(form),form:asForm});
+  const result=await api(endpoint,{method:'POST',data:asForm?new FormData(form):payload(form),form:asForm});
   form.reset();
   const today=dateNow();
   for(const inp of form.querySelectorAll('input[type=date]'))inp.value=today;
-  notice('Entry saved.');
+  notice(endpoint==='rates'&&result.rateId?'Rate profile '+result.rateId+' saved.':'Entry saved.');
   await load();
+  if(newFamilyName){
+   const family=families.find(f=>f.name.toLowerCase()===newFamilyName.toLowerCase());
+   if(family){$('rate-family').value=family._id;await refreshRateIdPreview();}
+  }
  }catch(e){notice(e.message,true);}finally{btn.disabled=false;}
 }
 function attach(){
@@ -66,6 +85,7 @@ function attach(){
  $('refresh').addEventListener('click',()=>load().then(()=>notice('Updated.')).catch(e=>notice(e.message,true)));
  $('family-form').addEventListener('submit',e=>{e.preventDefault();submit(e.currentTarget,'families');});
  $('rate-form').addEventListener('submit',e=>{e.preventDefault();submit(e.currentTarget,'rates');});
+ $('rate-family').addEventListener('change',()=>refreshRateIdPreview());
  $('work-form').addEventListener('submit',e=>{e.preventDefault();submit(e.currentTarget,'shifts');});
  $('expense-form').addEventListener('submit',e=>{e.preventDefault();submit(e.currentTarget,'expenses',true);});
  document.addEventListener('click',async e=>{

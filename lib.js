@@ -54,3 +54,40 @@ export function makeReport(shifts,expenses,payments){
  })).sort((a,b)=>b.period.localeCompare(a.period)||a.familyName.localeCompare(b.familyName));
  return {weekly:output(weekly,true),monthly:output(monthly,false)};
 }
+
+/** Generate a stable, unique, family-based rate code without changing earlier profiles. */
+export function generateRateId(familyName,familyId,existingRates=[]){
+ const stem=String(familyName??'').normalize('NFKD')
+  .replace(/[\u0300-\u036f]/g,'').replace(/(?:[\s_-]+family)\s*$/i,'')
+  .replace(/[^A-Za-z0-9]+/g,'-').replace(/^-+|-+$/g,'')
+  .toUpperCase().slice(0,42).replace(/-+$/g,'')||'FAMILY';
+ const owner=String(familyId??'');
+ const owned=existingRates.filter(r=>String(r.familyId)===owner);
+ const taken=new Set(existingRates.map(r=>String(r.rateId??'').toLowerCase()));
+ const suffix=owner.replace(/[^A-Za-z0-9]/g,'').slice(-6).toUpperCase()||'NEW';
+ const alternate=stem.slice(0,35)+'-'+suffix;
+ const nextFor=prefix=>{
+  const start=(prefix+'-v').toLowerCase();
+  let version=owned.length+1;
+  for(const r of owned){
+   const code=String(r.rateId??'').toLowerCase();
+   const tail=code.startsWith(start)?code.slice(start.length):'';
+   if(/^[1-9]\d*$/.test(tail))version=Math.max(version,Number(tail)+1);
+  }
+  return prefix+'-v'+version;
+ };
+ const priorAlternate=owned.some(r=>new RegExp('^'+alternate+'-v\\d+$','i').test(String(r.rateId??'')));
+ let prefix=priorAlternate?alternate:stem;
+ let candidate=nextFor(prefix);
+ if(prefix===stem&&taken.has(candidate.toLowerCase())){
+  prefix=alternate;
+  candidate=nextFor(prefix);
+ }
+ let attempts=0;
+ while(taken.has(candidate.toLowerCase())&&attempts++<1000){
+  const version=Number(candidate.match(/-v(\d+)$/)[1]);
+  candidate=prefix+'-v'+(version+1);
+ }
+ if(taken.has(candidate.toLowerCase()))throw Error('Unable to allocate a unique rate ID.');
+ return candidate;
+}

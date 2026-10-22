@@ -10,7 +10,7 @@ import {MongoClient,ObjectId,GridFSBucket} from 'mongodb';
 import crypto from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {dirname,join} from 'node:path';
-import {validDate,validTime,toCents,calculateShift,weekOf,makeReport,SERVICES,STATUSES} from './lib.js';
+import {validDate,validTime,toCents,calculateShift,weekOf,makeReport,SERVICES,STATUSES,generateRateId} from './lib.js';
 
 const required=['MONGODB_URI','ADMIN_EMAIL','ADMIN_PASSWORD_HASH','SESSION_SECRET'];
 const missing=required.filter(k=>!process.env[k]||process.env[k].includes('<'));
@@ -63,16 +63,33 @@ app.post('/api/families',csrf,wrap(async(req,res)=>guard(req,res,async()=>{
  await db.collection('families').insertOne(doc);res.status(201).json({ok:true});
 })));
 app.get('/api/rates',wrap(async(req,res)=>res.json(await db.collection('rates').find({}).sort({familyName:1,effectiveDate:-1}).toArray())));
+const suggestRateId=async family=>{
+ const codes=await db.collection('rates').find({},{projection:{rateId:1,familyId:1}}).toArray();
+ return generateRateId(family.name,String(family._id),codes);
+};
+app.get('/api/rates/next-id',wrap(async(req,res)=>{
+ const familyId=id(req.query.familyId),family=familyId?await db.collection('families').findOne({_id:familyId}):null;
+ if(!family)return fail(res,'Choose a valid family.');
+ res.json({rateId:await suggestRateId(family)});
+}));
+
 app.post('/api/rates',csrf,wrap(async(req,res)=>guard(req,res,async()=>{
  const familyId=id(req.body.familyId),family=familyId?await db.collection('families').findOne({_id:familyId}):null;
  if(!family)throw Error('Choose a family.');
- const rateId=safe(req.body.rateId,60);
- if(!/^[A-Za-z0-9][A-Za-z0-9_-]{1,59}$/.test(rateId))throw Error('Use a unique rate ID, e.g. FAM1-v1.');
  const ages=safe(req.body.ages,140),effectiveDate=req.body.effectiveDate;
  if(!ages||!validDate(effectiveDate))throw Error('Enter the children ages and a valid effective date.');
  const rates={Daytime:toCents(req.body.daytimeRate,true),'Overnight Awake':toCents(req.body.overnightAwakeRate,true),'Overnight Asleep':toCents(req.body.overnightAsleepRate,true)};
- const doc={rateId,rateKey:rateId.toLowerCase(),familyId,familyName:family.name,childrenCount:limitInt(req.body.childrenCount,1,20),ages,effectiveDate,rates,notes:safe(req.body.notes,600),createdAt:new Date()};
- await db.collection('rates').insertOne(doc);res.status(201).json({ok:true});
+ const base={familyId,familyName:family.name,childrenCount:limitInt(req.body.childrenCount,1,20),ages,effectiveDate,rates,notes:safe(req.body.notes,600),createdAt:new Date()};
+ // A unique database index prevents duplicate IDs even with concurrent submissions.
+ for(let attempt=0;attempt<8;attempt++){
+  const rateId=await suggestRateId(family);
+  try{
+   await db.collection('rates').insertOne({...base,rateId,rateKey:rateId.toLowerCase()});
+   return res.status(201).json({ok:true,rateId});
+  }catch(error){
+   if(error?.code!==11000||attempt===7)throw error;
+  }
+ }
 })));
 app.get('/api/shifts',wrap(async(req,res)=>res.json(await db.collection('shifts').find({}).sort({startAt:-1}).limit(800).toArray())));
 app.post('/api/shifts',csrf,wrap(async(req,res)=>guard(req,res,async()=>{

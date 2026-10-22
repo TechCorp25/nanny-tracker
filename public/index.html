@@ -71,7 +71,7 @@
 <div class="card"><h2>Add family</h2><form id="family-form"><label>Family name<input name="name" placeholder="e.g. Smith family" required maxlength="100"></label><button type="submit">Add family</button></form><div id="family-list"></div></div>
 <div class="card"><h2>Add rate profile</h2><form id="rate-form" class="form-grid">
 <label>Family<select id="rate-family" name="familyId" required></select></label>
-<label>Rate ID<input name="rateId" placeholder="e.g. FAM1-v1" pattern="[A-Za-z0-9][A-Za-z0-9_-]+" required></label>
+<label>Rate ID (automatic)<input id="rate-id-preview" type="text" value="Choose a family" readonly aria-label="Automatically generated rate ID"></label>
 <label>Number of children<input name="childrenCount" type="number" min="1" max="20" step="1" required></label>
 <label>Children's ages<input name="ages" placeholder="e.g. 2 and 6 years" required></label>
 <label>Daytime ($/hour)<input name="daytimeRate" type="number" min="0" step=".01" required></label>
