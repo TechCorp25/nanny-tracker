@@ -132,8 +132,8 @@ function refreshSegments(){
 function updateSegmentProfiles(section){
  const familyId=c('multi-family').value,kids=selected(section.querySelector('.segment-child-options')).sort();
  const matching=rates.filter(r=>{
-  if(String(r.familyId)!==familyId)return false;
-  const ids=(r.childIds||[]).map(String).sort();
+  if(String(r.familyId)!==familyId||!Array.isArray(r.childIds)||!r.childIds.length)return false;
+  const ids=r.childIds.map(String).sort();
   return ids.length?JSON.stringify(ids)===JSON.stringify(kids):!kids.length;
  });
  options(section.querySelector('.seg-rate'),matching,rateLabel,'Choose matching rate profile…');describeSegment(section);
@@ -142,7 +142,7 @@ function describeSegment(section){
  const rate=rates.find(r=>String(r._id)===section.querySelector('.seg-rate').value);
  section.querySelector('.segment-description').textContent=rate?
   (rate.serviceType||'Legacy rate')+' · '+rateText(rate)+' · '+rate.rateId:
-  'Select children and a matching saved rate profile. For legacy profiles, leave children unchecked.';
+  'Select children and a matching saved rate profile. Use the legacy form for older profiles.';
 }
 async function saveMultiShift(e){
  e.preventDefault();const btn=e.currentTarget.querySelector('[type=submit]');btn.disabled=true;

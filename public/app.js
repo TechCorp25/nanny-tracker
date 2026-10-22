@@ -51,7 +51,7 @@ async function refreshRateIdPreview(){
  }
 }
 function draw(){
- selectOptions('shift-rate',rates,'_id',r=>r.familyName+' · '+r.rateId+' ('+r.ages+')');
+ selectOptions('shift-rate',rates.filter(r=>r.rates),'_id',r=>r.familyName+' · '+r.rateId+' ('+r.ages+')');
  selectOptions('rate-family',families,'_id',f=>f.name);
  void refreshRateIdPreview();
  selectOptions('expense-family',families,'_id',f=>f.name);

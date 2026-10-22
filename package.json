@@ -8,7 +8,7 @@
   },
   "scripts": {
     "start": "node server.js",
-    "test": "node --test",
+    "test": "node --test && node --check server.js && node --check care-logic.js && node --check feature-routes.js && node --check public/app.js && node --check public/upgrade.js",
     "hash-password": "node scripts/hash-password.js"
   },
   "dependencies": {
