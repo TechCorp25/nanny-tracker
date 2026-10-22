@@ -76,62 +76,64 @@ export async function registerCareRoutes(app,{db,csrf,wrap}){
   }
  }));
  app.post('/api/shifts/v2',csrf,wrap(async(req,res)=>{
-  const input=req.body||{},familyId=id(input.familyId),family=familyId?await db.collection('families').findOne({_id:familyId}):null;
-  if(!family)return res.status(400).json({error:'Choose a family.'});
+  const input=req.body||{},familyId=id(input.familyId);
+  if(!familyId)return res.status(400).json({error:'Choose a family.'});
   if(!Array.isArray(input.segments)||input.segments.length<1||input.segments.length>24)
    return res.status(400).json({error:'Add between 1 and 24 time segments.'});
   const profileIds=input.segments.map(s=>id(s.rateId));
   if(profileIds.some(x=>!x))return res.status(400).json({error:'Select a rate profile in each segment.'});
-  const profiles=await db.collection('rates').find({_id:{$in:profileIds},familyId}).toArray();
-  const currentChildren=await db.collection('children').find({familyId}).toArray();
-  const currentNames=new Map(currentChildren.map(c=>[String(c._id),c.name]));
-  const archivedIds=new Set(currentChildren.filter(c=>c.archived).map(c=>String(c._id)));
-  const profileMap=new Map(profiles.map(x=>[String(x._id),x]));
-  let result;
+  const session=db.client.startSession();
   try{
-   const segments=input.segments.map(s=>{
-    const p=profileMap.get(String(s.rateId));
-    if(p&&(p.childIds||[]).some(i=>archivedIds.has(String(i))))throw Error('This rate includes an archived child. Choose a current rate profile.');
-    if(!p)throw Error('Every segment must use a rate profile belonging to the selected family.');
-    if(!validDate(s.workDate)||s.workDate<p.effectiveDate)throw Error('A segment date precedes the profile effective date.');
-    const serviceType=p.serviceType||s.serviceType;
-    if(!SERVICES.includes(serviceType))throw Error('Select a valid service for each segment.');
-    const expected=(p.childIds||[]).map(String).sort();
-    if(expected.length){
-     if(!Array.isArray(s.childIds)||new Set(s.childIds).size!==s.childIds.length||
-        JSON.stringify([...s.childIds].sort())!==JSON.stringify(expected))
-      throw Error('Segment child selection must match the saved rate profile.');
-    }
-    const unit=p.billingUnit||'hour';
-    const rateCents=p.rateCents??p.rates?.[serviceType];
-    if(!Number.isSafeInteger(rateCents))throw Error('Invalid rate profile.');
-    return {
-     rateId:p._id,rateCode:p.rateId,serviceType,
-     childIds:p.childIds||[],
-     childrenSnapshot:(p.childrenSnapshot||[]).map(c=>({...c,name:currentNames.get(String(c.childId))||c.name})),
-     rateCents,billingUnit:unit,
-     workDate:s.workDate,startTime:s.startTime,endTime:s.endTime,
-     breakMinutes:s.breakMinutes||0
-    };
+   let outcome;
+   await session.withTransaction(async()=>{
+    // Family edits update this same document in their transaction. This write
+    // serializes archive/removal against shift validation and insertion. If either
+    // races, MongoDB retries the transaction against the winner's committed state.
+    const lock=await db.collection('families').updateOne({_id:familyId},{$inc:{revision:1}},{session});
+    if(!lock.matchedCount)throw Error('Choose a family.');
+    const family=await db.collection('families').findOne({_id:familyId},{session});
+    const profiles=await db.collection('rates').find({_id:{$in:profileIds},familyId},{session}).toArray();
+    const currentChildren=await db.collection('children').find({familyId},{session}).toArray();
+    const currentNames=new Map(currentChildren.map(c=>[String(c._id),c.name]));
+    const archivedIds=new Set(currentChildren.filter(c=>c.archived).map(c=>String(c._id)));
+    const profileMap=new Map(profiles.map(x=>[String(x._id),x]));
+    let result;
+    try{
+     const segments=input.segments.map(s=>{
+      const p=profileMap.get(String(s.rateId));
+      if(p&&(p.childIds||[]).some(i=>archivedIds.has(String(i))))throw Error('This rate includes an archived child. Choose a current rate profile.');
+      if(!p)throw Error('Every segment must use a rate profile belonging to the selected family.');
+      if(!validDate(s.workDate)||s.workDate<p.effectiveDate)throw Error('A segment date precedes the profile effective date.');
+      const serviceType=p.serviceType||s.serviceType;
+      if(!SERVICES.includes(serviceType))throw Error('Select a valid service for each segment.');
+      const expected=(p.childIds||[]).map(String).sort();
+      if(expected.length&&(!Array.isArray(s.childIds)||new Set(s.childIds).size!==s.childIds.length||JSON.stringify([...s.childIds].sort())!==JSON.stringify(expected)))
+       throw Error('Segment child selection must match the saved rate profile.');
+      const unit=p.billingUnit||'hour',rateCents=p.rateCents??p.rates?.[serviceType];
+      if(!Number.isSafeInteger(rateCents))throw Error('Invalid rate profile.');
+      return {rateId:p._id,rateCode:p.rateId,serviceType,childIds:p.childIds||[],
+       childrenSnapshot:(p.childrenSnapshot||[]).map(c=>({...c,name:currentNames.get(String(c.childId))||c.name})),
+       rateCents,billingUnit:unit,workDate:s.workDate,startTime:s.startTime,endTime:s.endTime,breakMinutes:s.breakMinutes||0};
+     });
+     result=compositeShift(segments);
+    }catch(e){throw Object.assign(e,{status:400});}
+    const overlap=await db.collection('shifts').findOne({familyId,startAt:{$lt:result.endAt},endAt:{$gt:result.startAt}},{session});
+    if(overlap)throw Object.assign(Error('The time range overlaps another shift for this family; no duplicate charges were recorded.'),{status:409});
+    const first=result.careSegments[0];
+    const doc={familyId,familyName:family.name,rateId:first.rateId,
+     rateCode:result.careSegments.length===1?first.rateCode:'MULTIPLE',
+     rateCodes:[...new Set(result.careSegments.map(s=>s.rateCode))],
+     serviceType:result.careSegments.length===1?first.serviceType:'Multiple services',
+     workDate:first.workDate,startTime:first.startTime,endTime:result.careSegments.at(-1).endTime,
+     breakMinutes:result.careSegments.reduce((n,s)=>n+Number(s.breakMinutes),0),
+     hourlyRateCents:result.careSegments.length===1&&first.billingUnit==='hour'?first.rateCents:null,
+     notes:clean(input.notes,800),...result,createdAt:new Date()};
+    const stored=await db.collection('shifts').insertOne(doc,{session});
+    outcome={status:201,body:{ok:true,id:String(stored.insertedId),wageCents:doc.wageCents}};
    });
-   result=compositeShift(segments);
-  }catch(e){return res.status(400).json({error:e.message});}
-  const overlap=await db.collection('shifts').findOne({familyId,startAt:{$lt:result.endAt},endAt:{$gt:result.startAt}});
-  if(overlap)return res.status(409).json({error:'The time range overlaps another shift for this family; no duplicate charges were recorded.'});
-  const first=result.careSegments[0];
-  const doc={
-   familyId,familyName:family.name,rateId:first.rateId,
-   rateCode:result.careSegments.length===1?first.rateCode:'MULTIPLE',
-   rateCodes:[...new Set(result.careSegments.map(s=>s.rateCode))],
-   serviceType:result.careSegments.length===1?first.serviceType:'Multiple services',
-   workDate:first.workDate,startTime:first.startTime,
-   endTime:result.careSegments.at(-1).endTime,
-   breakMinutes:result.careSegments.reduce((n,s)=>n+Number(s.breakMinutes),0),
-   hourlyRateCents:result.careSegments.length===1&&first.billingUnit==='hour'?first.rateCents:null,
-   notes:clean(input.notes,800),...result,createdAt:new Date()
-  };
-  const stored=await db.collection('shifts').insertOne(doc);
-  res.status(201).json({ok:true,id:String(stored.insertedId),wageCents:doc.wageCents});
+   res.status(outcome.status).json(outcome.body);
+  }catch(e){res.status(e.status||400).json({error:e.message||'Unable to save shift.'});}
+  finally{await session.endSession();}
  }));
  app.get('/api/expenses/report',wrap(async(req,res)=>{
   const familyId=clean(req.query.familyId,64),period=clean(req.query.period||'all',10),start=clean(req.query.start,10);

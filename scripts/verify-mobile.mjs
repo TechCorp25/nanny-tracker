@@ -25,7 +25,7 @@ try{
    const context=await browser.newContext({viewport:{width:375,height:812},deviceScaleFactor:3,isMobile:true,hasTouch:true});
    const page=await context.newPage();page.setDefaultTimeout(12000);console.log(engine+': signed-in workflow starting');page.on('pageerror',e=>errors.push(engine+': '+e.message));
    await page.goto('http://127.0.0.1:4317');
-   await page.locator('[name=email]').fill('test@example.com');await page.locator('[name=password]').fill('local-test-only');await page.locator('#login-form button').click();
+   await page.locator('[name=email]').fill('test@example.com');await page.locator('[name=password]').fill('incorrect-password');await page.locator('#login-form button').click();await expect(page.locator('#message')).toHaveText('Incorrect credentials.');await expect(page.locator('#login-panel')).toBeVisible();await expect(page.locator('#application')).toBeHidden();await page.locator('[name=password]').fill('local-test-only');await page.locator('#login-form button').click();
    await page.locator('#application').waitFor({state:'visible'});await expect.poll(()=>page.locator('.edit-family').count()).toBe(2);
    const call=(path,data,method='POST')=>page.evaluate(async({path,data,method})=>api(path,{method,data}),{path,data,method});
    const shift={familyId:String(fid),segments:[{rateId:String(rid),childIds:[String(kid)],workDate:engine==='chromium'?'2026-10-20':'2026-10-21',startTime:'09:00',endTime:'10:00',breakMinutes:0}]};
@@ -53,7 +53,27 @@ try{
     const beforeInvalid=JSON.stringify(await db.collection('families').findOne({_id:fid}));
     await assert.rejects(()=>call('families/'+fid,{...edit,revision:edit.revision+1,children:edit.children.map(c=>({...c,name:'Duplicate'}))},'PATCH'),/distinct/);
     assert.equal(JSON.stringify(await db.collection('families').findOne({_id:fid})),beforeInvalid);
-    checks.push('Real Mongo transactions: rename, unlinked removal, archive, restore, stale-edit rejection, archived-profile rejection; rate and shift documents unchanged.');
+    // Race an archive and shift request repeatedly. If the shift wins, its write
+    // timestamp must precede the archive commit; otherwise it must be rejected.
+    for(let i=0;i<5;i++){
+     const current=await call('families/'+fid,null,'GET');
+     const archivedEdit={name:current.name,revision:current.revision,children:current.children.map(c=>({id:c._id,name:c.name,status:c._id===String(kid)?'archived':'removed'}))};
+     const concurrentShift={...shift,segments:shift.segments.map(s=>({...s,workDate:'2026-11-'+String(1+i).padStart(2,'0'),startTime:'13:00',endTime:'14:00'}))};
+     const [archivedResult,shiftResult]=await Promise.all([
+      page.evaluate(async({fid,kid})=>{for(let attempt=0;attempt<4;attempt++){const current=await api('families/'+fid);const data={name:current.name,revision:current.revision,children:current.children.map(c=>({id:c._id,name:c.name,status:c._id===kid?'archived':c.removed?'removed':c.archived?'archived':'active'}))};try{return await api('families/'+fid,{method:'PATCH',data});}catch(error){if(!error.message.includes('changed in another window'))throw error;}}throw Error('Family edit retry limit exceeded.');},{fid:String(fid),kid:String(kid)}).then(value=>({ok:true,value}),error=>({ok:false,error:error.message})),
+      page.evaluate(async data=>api('shifts/v2',{method:'POST',data}),concurrentShift).then(value=>({ok:true,value}),error=>({ok:false,error:error.message}))
+     ]);
+     assert.equal(archivedResult.ok,true,archivedResult.error);
+     assert.equal((await db.collection('children').findOne({_id:kid})).archived,true);
+     if(shiftResult.ok){
+      const raced=await db.collection('shifts').findOne({workDate:concurrentShift.segments[0].workDate,'careSegments.childIds':kid});
+      assert.ok(raced,'successful shift exists');
+      assert.ok(raced.createdAt <= (await db.collection('children').findOne({_id:kid})).updatedAt,'shift committing after archive must not use archived profile');
+     }else assert.match(shiftResult.error,/archived child/);
+     const restore=await call('families/'+fid,null,'GET');
+     await call('families/'+fid,{name:restore.name,revision:restore.revision,children:restore.children.map(c=>({id:c._id,name:c.name,status:c._id===String(kid)?'active':'removed'}))},'PATCH');
+    }
+    checks.push('Real Mongo transactions: login error visibility, rename, unlinked removal, archive, restore, stale-edit rejection, archived-profile rejection and concurrent archive/shift races; rate and historical earnings remain unchanged.');
    }
    await page.evaluate(()=>load());
    for(const [label,width,height] of [['portrait',375,812],['landscape',812,375],['keyboard',375,390],['desktop',1440,900]]){

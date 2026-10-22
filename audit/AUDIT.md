@@ -58,6 +58,8 @@ Browser integration covered:
 - Receipt image selection through the camera input and storage through the actual upload endpoint; expense editing and category reporting.
 - CSV export returns successfully.
 - No JavaScript page errors.
+- Invalid sign-in displays a visible error while leaving the application hidden.
+- Five concurrent archive/shift races serialize on the family revision; new shifts are rejected if archival commits first, and a shift that commits first is timestamped before the archive.
 
 The iPhone 13 mini CSS viewport was cross-checked against the browser-emulation vendor's device reference: [Blisk iPhone 13 mini](https://blisk.io/devices/details/iphone-13-mini), 375 × 812 CSS px, DPR 3. Landscape uses 812 × 375. Browser controls reduce the usable visual viewport; hardware pixel dimensions should not be substituted for CSS dimensions.
 
@@ -75,6 +77,10 @@ Full-page screenshots capture scrollable content beyond one screen. The family e
 - [Portrait overview](screenshots/chromium-portrait-dashboard.png)
 
 The screenshots folder also contains the other views in landscape and desktop sizes. `verification.json` records the successful automated checks. The CI workflow now reruns the browser checks and uploads screenshots.
+
+## Codex review follow-up
+
+Two valid findings were addressed before merge. The shared notice now renders outside the authenticated app so sign-in errors remain visible. Segmented shift validation and insertion now run in a MongoDB transaction that writes the same family revision as family edits, forcing concurrent archive/shift operations to serialize and retry against committed child status. The integration test now exercises this race five times.
 
 ## Remaining checks and limitations
 

@@ -1,6 +1,6 @@
 {
   "checks": [
-    "Real Mongo transactions: rename, unlinked removal, archive, restore, stale-edit rejection, archived-profile rejection; rate and shift documents unchanged.",
+    "Real Mongo transactions: login error visibility, rename, unlinked removal, archive, restore, stale-edit rejection, archived-profile rejection and concurrent archive/shift races; rate and historical earnings remain unchanged.",
     "chromium portrait 375×812: four views, controls, family dialog and cancel passed",
     "chromium landscape 812×375: four views, controls, family dialog and cancel passed",
     "chromium keyboard 375×390: four views, controls, family dialog and cancel passed",
