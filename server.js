@@ -12,6 +12,7 @@ import {fileURLToPath} from 'node:url';
 import {dirname,join} from 'node:path';
 import {validDate,validTime,toCents,calculateShift,weekOf,makeReport,SERVICES,STATUSES,generateRateId} from './lib.js';
 import {EXPENSE_TYPES} from './care-logic.js';
+import {registerFamilyRoutes} from './family-routes.js';
 import {registerCareRoutes} from './feature-routes.js';
 
 const required=['MONGODB_URI','ADMIN_EMAIL','ADMIN_PASSWORD_HASH','SESSION_SECRET'];
@@ -58,6 +59,7 @@ app.post('/api/login',rateLimit({windowMs:900000,limit:8,standardHeaders:'draft-
 }));
 app.use('/api',auth);
 app.post('/api/logout',csrf,(req,res)=>req.session.destroy(e=>e?fail(res,'Sign-out error.',500):res.clearCookie('nanny.sid').json({ok:true})));
+registerFamilyRoutes(app,{db,client,csrf,wrap});
 await registerCareRoutes(app,{db,csrf,wrap});
 app.get('/api/families',wrap(async(req,res)=>res.json(await db.collection('families').find({}).sort({name:1}).toArray())));
 app.post('/api/families',csrf,wrap(async(req,res)=>guard(req,res,async()=>{
